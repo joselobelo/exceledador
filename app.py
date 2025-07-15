@@ -5,92 +5,88 @@ import io
 
 # --- Configuración de la Página ---
 st.set_page_config(
-    page_title="Extractor y Limpiador de Datos",
-    page_icon="🔎",
+    page_title="Extractor Inteligente de Contactos",
+    page_icon="🎯",
     layout="wide"
 )
 
-# --- Funciones de Extracción y Limpieza ---
-
+# --- Funciones de Extracción y Limpieza (sin cambios) ---
 def extract_and_clean_data(df, columns_to_search):
     """
-    Busca en las columnas seleccionadas de un DataFrame para extraer y limpiar
-    números de teléfono y correos electrónicos.
+    Busca en las columnas seleccionadas para extraer teléfonos y correos.
     """
-    all_phones = []
-    all_emails = []
+    all_rows_data = []
 
-    # Regex para encontrar emails y teléfonos colombianos de 10 dígitos.
     email_regex = re.compile(r'[\w\.\-]+@[\w\.\-]+')
-    phone_regex = re.compile(r'(?<!\d)\d{10}(?!\d)') # Encuentra exactamente 10 dígitos
+    phone_regex = re.compile(r'\b(3\d{9})\b')
 
     for index, row in df.iterrows():
         found_phones = set()
         found_emails = set()
 
-        # Itera sobre las columnas que el usuario seleccionó
         for col in columns_to_search:
             cell_value = str(row[col])
 
-            # Extraer emails
             emails_in_cell = email_regex.findall(cell_value)
             for email in emails_in_cell:
-                # Simple validación final
                 if '.' in email.split('@')[-1]:
                     found_emails.add(email.lower())
 
-            # Extraer teléfonos
             phones_in_cell = phone_regex.findall(cell_value)
-            for phone in phones_in_cell:
-                 # Validación de prefijo colombiano
-                if phone.startswith('3'):
-                    found_phones.add(phone)
+            found_phones.update(phones_in_cell)
 
-        all_phones.append(list(found_phones))
-        all_emails.append(list(found_emails))
+        all_rows_data.append({
+            "Telefonos": list(found_phones),
+            "Correos": list(found_emails)
+        })
 
-    # Crear un nuevo DataFrame con los resultados
-    # Se toma el primer teléfono/email encontrado por fila para simplicidad en la salida
-    # Se podría expandir para manejar múltiples contactos por fila si es necesario
-    results_df = pd.DataFrame({
-        'Telefono': [p[0] if p else None for p in all_phones],
-        'Correo': [e[0] if e else None for e in all_emails]
+    final_df = pd.DataFrame({
+        'Telefono': [p["Telefonos"][0] if p["Telefonos"] else None for p in all_rows_data],
+        'Correo': [e["Correos"][0] if e["Correos"] else None for e in all_rows_data]
     })
     
-    # Eliminar filas donde no se encontró ni teléfono ni correo
-    results_df.dropna(how='all', inplace=True)
-    # Eliminar duplicados exactos
-    results_df.drop_duplicates(inplace=True)
+    final_df.dropna(how='all', inplace=True)
+    final_df.drop_duplicates(inplace=True)
     
-    return results_df
-
+    return final_df
 
 # --- Interfaz de la Aplicación ---
-st.title("🔎 Extractor y Limpiador Inteligente")
-st.markdown("Sube un archivo Excel con datos desordenados y la herramienta extraerá los teléfonos y correos válidos.")
+st.title("🎯 Extractor Inteligente de Contactos")
+st.markdown("Sube tus archivos Excel y la herramienta encontrará y limpiará los contactos automáticamente.")
 
-# 1. Carga de Archivos
-st.header("1. Cargar Archivo Excel")
-uploaded_file = st.file_uploader(
-    "Arrastra y suelta tu archivo Excel aquí (.xlsx, .xls)",
-    type=['xlsx', 'xls']
+# 1. Carga de Múltiples Archivos
+st.header("1. Cargar Archivos Excel")
+uploaded_files = st.file_uploader(
+    "Arrastra y suelta todos tus archivos Excel aquí",
+    type=['xlsx', 'xls'],
+    accept_multiple_files=True
 )
 
-if uploaded_file:
-    df = pd.read_excel(uploaded_file, engine='openpyxl')
-    st.success(f"✅ Archivo `{uploaded_file.name}` cargado. Contiene {len(df)} filas.")
-    st.write("Vista previa de los datos originales:")
-    st.dataframe(df.head())
-
-    # 2. Selección de Columnas para Analizar
-    st.header("2. Seleccionar Columnas a Analizar")
-    st.info("Elige todas las columnas que podrían contener teléfonos o correos, incluso si están mezclados.")
+if uploaded_files:
+    df_list = []
+    for file in uploaded_files:
+        df_temp = pd.read_excel(file, engine='openpyxl')
+        df_list.append(df_temp)
     
-    options = df.columns.tolist()
+    df = pd.concat(df_list, ignore_index=True)
+    st.success(f"✅ ¡Carga completa! Se han unido {len(uploaded_files)} archivos, sumando un total de {len(df)} filas.")
+    
+    # 2. Selección de Columnas (CON LA MEJORA)
+    st.header("2. Configurar Búsqueda")
+    
+    all_column_options = df.columns.tolist()
+    
+    # --- LÓGICA DE DETECCIÓN AUTOMÁTICA ---
+    keywords = ['tel', 'phone', 'telefono', 'móvil', 'celular', 'cel', 'email', 'correo', 'mail', '@']
+    default_selections = [col for col in all_column_options if any(keyword in str(col).lower() for keyword in keywords)]
+    # --- FIN DE LA LÓGICA ---
+    
+    st.info("La herramienta ha preseleccionado las columnas que parecen contener contactos. Puedes añadir o quitar columnas manualmente.")
+    
     columns_to_search = st.multiselect(
-        "Columnas para buscar:",
-        options=options,
-        default=options  # Por defecto, selecciona todas
+        "Columnas donde buscar:",
+        options=all_column_options,
+        default=default_selections  # <-- ¡AQUÍ ESTÁ LA MAGIA!
     )
 
     # 3. Procesamiento y Descarga
@@ -98,14 +94,13 @@ if uploaded_file:
         if not columns_to_search:
             st.warning("Por favor, selecciona al menos una columna para analizar.")
         else:
-            with st.spinner('Analizando y extrayendo datos...'):
+            with st.spinner('Buscando y limpiando contactos en las columnas seleccionadas...'):
                 clean_df = extract_and_clean_data(df, columns_to_search)
             
-            st.header("3. Resultados Extraídos y Limpios")
+            st.header("3. Resultados Finales")
             st.success(f"¡Proceso completado! Se encontraron {len(clean_df)} contactos únicos y válidos.")
             st.dataframe(clean_df)
 
-            # Preparar archivo para descarga
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 clean_df.to_excel(writer, index=False, sheet_name='Contactos Limpios')
@@ -115,6 +110,6 @@ if uploaded_file:
             st.download_button(
                 label="⬇️ Descargar Excel Limpio",
                 data=processed_data,
-                file_name=f"contactos_limpios_{uploaded_file.name}",
+                file_name="contactos_extraidos_limpios.xlsx",
                 mime="application/vnd.ms-excel"
             )
